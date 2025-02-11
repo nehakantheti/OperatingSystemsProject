@@ -1,5 +1,5 @@
 # OperatingSystemsProject
-Refer to documentation and README.md files inside each folder
+Please refer to documentation and README.md files inside each folder
 
 Contributors
 
