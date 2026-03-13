@@ -17,6 +17,13 @@ binutils-riscv64-linux-gnu libc6-dev-riscv64-cross \
 flex bison
 ```
 
+and, change the git repo clone to this repo link (https://github.com/nehakantheti/OperatingSystemsProject)
+So, the clone command will be : 
+```bash
+git clone https://github.com/nehakantheti/OperatingSystemsProject
+```
+
+instead of the clone command in the file. (The file's repo is clean xv6 OS with no changes that are made in this project.)
 
 P2 : Report is inside the Project 2 folder
 
