@@ -1,0 +1,13 @@
+*.o
+*.d
+*.asm
+*.sym
+*.out
+kernel/kernel
+user/_*
+mkfs/mkfs
+xv6.img
+fs.img
+.gdbinit
+.vscode/
+.DS_Store
