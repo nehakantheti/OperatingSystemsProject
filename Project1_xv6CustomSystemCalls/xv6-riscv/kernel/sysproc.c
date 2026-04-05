@@ -96,46 +96,29 @@ uint64
 sys_forex(void)
 {
     char filename[128]; // Buffer for the filename
-    int pid;
 
     // Fetch the filename argument from user space
     if (argstr(0, filename, sizeof(filename)) < 0) {
         filename[0] = '\0'; // Set to an empty string if no argument is provided
     }
-    char full_path[100];
-    int i = 0;
 
-    // Add the '/' to the path
-    full_path[i++] = '/';
+    if (filename[0] == '\0') {
+        return fork();
+    } else {
+        char full_path[128];
+        int i = 0;
 
-    // Copy the filename to the full_path starting after the '/'
-    for (int j = 0; filename[j] != '\0'; j++, i++) {
-        full_path[i] = filename[j];
-    }
-
-    // Null-terminate the string
-    full_path[i] = '\0';
-    pid = fork();
-    if (pid < 0) 
-    {
-      return -1; // Fork failed
-    }
-    if (pid == 0) 
-    {
-      // In child process
-      if (filename[0] != '\0') 
-      {
-        // Execute the specified program
-        if(exec(full_path, 0)<0)
-        {
-        	printf("File not opening!\n");
+        if (filename[0] != '/') {
+            full_path[i++] = '/';
         }
-        exit(0); // Exit if exec fails
-      }
-      // If no filename is provided, continue as a normal forked process
+
+        for (int j = 0; filename[j] != '\0'; j++, i++) {
+            full_path[i] = filename[j];
+        }
+
+        full_path[i] = '\0';
+        return spawn(full_path);
     }
-    // In parent process, return the PID of the child
-    return pid;
 }
 
 uint64 

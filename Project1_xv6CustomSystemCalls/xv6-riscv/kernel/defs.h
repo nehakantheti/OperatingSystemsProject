@@ -24,6 +24,7 @@ void            consputc(int);
 
 // exec.c
 int             exec(char*, char**);
+int             spawn(char*);
 
 // file.c
 struct file*    filealloc(void);
@@ -95,6 +96,8 @@ void            setkilled(struct proc*);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
 struct proc*    myproc();
+struct proc*    allocproc(void);
+void            freeproc(struct proc*);
 void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
