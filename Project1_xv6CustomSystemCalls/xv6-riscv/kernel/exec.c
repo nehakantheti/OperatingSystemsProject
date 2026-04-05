@@ -7,6 +7,8 @@
 #include "defs.h"
 #include "elf.h"
 
+extern struct spinlock wait_lock;
+
 static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
 
 int flags2perm(int flags)
@@ -164,3 +166,158 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz
   
   return 0;
 }
+
+int
+spawn(char *path)
+{
+  char *s, *last;
+  int i, off;
+  uint64 argc, sz = 0, sp, ustack[MAXARG], stackbase;
+  struct elfhdr elf;
+  struct inode *ip;
+  struct proghdr ph;
+  pagetable_t pagetable = 0;
+  struct proc *p = myproc();
+  struct proc *np;
+
+  if((np = allocproc()) == 0){
+    return -1;
+  }
+  // Release lock immediately since it will not be scheduled until RUNNABLE
+  release(&np->lock);
+
+  char *argv[2];
+  argv[0] = path;
+  argv[1] = 0;
+
+  begin_op();
+
+  if((ip = namei(path)) == 0){
+    end_op();
+    acquire(&np->lock);
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+  ilock(ip);
+
+  // Check ELF header
+  if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+    goto bad;
+
+  if(elf.magic != ELF_MAGIC)
+    goto bad;
+
+  // np->pagetable was already initialized by allocproc, we can just use it directly!
+  pagetable = np->pagetable;
+
+  // Load program into memory.
+  for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
+    if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
+      goto bad;
+    if(ph.type != ELF_PROG_LOAD)
+      continue;
+    if(ph.memsz < ph.filesz)
+      goto bad;
+    if(ph.vaddr + ph.memsz < ph.vaddr)
+      goto bad;
+    if(ph.vaddr % PGSIZE != 0)
+      goto bad;
+    uint64 sz1;
+    if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
+      goto bad;
+    sz = sz1;
+    if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+      goto bad;
+  }
+  iunlockput(ip);
+  end_op();
+  ip = 0;
+
+  p = myproc();
+
+  sz = PGROUNDUP(sz);
+  uint64 sz1;
+  if((sz1 = uvmalloc(pagetable, sz, sz + (USERSTACK+1)*PGSIZE, PTE_W)) == 0)
+    goto bad;
+  sz = sz1;
+  uvmclear(pagetable, sz-(USERSTACK+1)*PGSIZE);
+  sp = sz;
+  stackbase = sp - USERSTACK*PGSIZE;
+
+  // Push argument strings, prepare rest of stack in ustack.
+  for(argc = 0; argv[argc]; argc++) {
+    if(argc >= MAXARG)
+      goto bad;
+    sp -= strlen(argv[argc]) + 1;
+    sp -= sp % 16; // riscv sp must be 16-byte aligned
+    if(sp < stackbase)
+      goto bad;
+    // copyout DOES NOT assume myproc(), it manually resolves pagetable
+    if(copyout(pagetable, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
+      goto bad;
+    ustack[argc] = sp;
+  }
+  ustack[argc] = 0;
+
+  // push the array of argv[] pointers.
+  sp -= (argc+1) * sizeof(uint64);
+  sp -= sp % 16;
+  if(sp < stackbase)
+    goto bad;
+  if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
+    goto bad;
+
+  // Save program name
+  for(last=s=path; *s; s++)
+    if(*s == '/')
+      last = s+1;
+  safestrcpy(np->name, last, sizeof(np->name));
+    
+  *(np->trapframe) = *(p->trapframe);
+
+  // arguments to user main(argc, argv)
+  np->trapframe->a1 = sp;
+
+  np->sz = sz;
+  np->trapframe->epc = elf.entry;  // initial program counter = main
+  np->trapframe->sp = sp; // initial stack pointer
+
+  np->trapframe->a0 = argc;
+
+  // increment reference counts on open file descriptors.
+  for(i = 0; i < NOFILE; i++)
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = idup(p->cwd);
+
+  safestrcpy(np->name, last, sizeof(np->name));
+
+  int pid = np->pid;
+
+  acquire(&wait_lock);
+  np->parent = p;
+  release(&wait_lock);
+
+  acquire(&np->lock);
+  np->state = RUNNABLE;
+  release(&np->lock);
+
+  return pid;
+
+ bad:
+  if(pagetable)
+    proc_freepagetable(pagetable, sz);
+  if(ip){
+    iunlockput(ip);
+    end_op();
+  }
+  acquire(&np->lock);
+  // since freeproc frees pagetable, we need to clear pagetable since we already freed it
+  np->pagetable = 0;
+  np->sz = 0;
+  freeproc(np);
+  release(&np->lock);
+  return -1;
+}
+
